@@ -1,0 +1,318 @@
+---
+title: "Small Area Estimation - UFH, MFH & Comparison Report"
+author: "EU SAE Pipeline"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+    self_contained: true
+    fig_width: 10
+    fig_height: 6
+    md_extensions: "-smart"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  out.width = "100%"
+)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(readxl)
+  library(knitr)
+  library(patchwork)
+  library(sf)
+  library(scales)
+  library(here)
+})
+
+fig_dir   <- here::here("outputs", "figures")
+data_dir  <- here::here("outputs", "data")
+table_dir <- here::here("outputs", "tables")
+
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+include_fig <- function(filename, ...) {
+  path <- file.path(fig_dir, filename)
+  if (file.exists(path)) {
+    knitr::include_graphics(path)
+  } else {
+    cat(sprintf("*Figure not available: %s*\n", filename))
+  }
+}
+
+safe_read_csv <- function(filename, dir = table_dir) {
+  path <- file.path(dir, filename)
+  if (file.exists(path)) read.csv(path) else NULL
+}
+```
+
+# Executive Summary
+
+```{r load-comparison}
+pov_fh  <- tryCatch(read_excel(file.path(data_dir, "pov_fh.xlsx")),
+                     error = function(e) NULL)
+pov_mfh <- tryCatch(read_excel(file.path(data_dir, "pov_mfh.xlsx")),
+                     error = function(e) NULL)
+pov_cmp <- tryCatch(read_excel(file.path(data_dir, "pov_comparison_detailed.xlsx")),
+                     error = function(e) NULL)
+mfh_artifacts <- tryCatch(readRDS(file.path(data_dir, "mfh_artifacts.rds")),
+                          error = function(e) NULL)
+
+sig_summary <- safe_read_csv("significance_summary.csv",
+                              file.path(fig_dir, "tables"))
+exec_summary <- safe_read_csv("executive_summary.csv",
+                               file.path(fig_dir, "tables"))
+```
+
+```{r exec-summary-table}
+if (!is.null(exec_summary)) {
+  kable(exec_summary, digits = 4,
+        caption = "Mean estimates and mean MSEs by year")
+}
+```
+
+```{r sig-summary-table}
+if (!is.null(sig_summary)) {
+  kable(sig_summary, digits = 0,
+        caption = "Number of domains with statistically significant changes")
+}
+```
+
+# Comparison of UFH and MFH
+
+This section compares the univariate (UFH) and multivariate (MFH) Fay-Herriot pipelines side by side, examining regression formulas, normality diagnostics, precision metrics, poverty maps, and change analyses.
+
+```{r mfh-availability, results='asis'}
+mfh_status <- if (!is.null(mfh_artifacts)) {
+  list(
+    fit_failed  = isTRUE(mfh_artifacts$model_fit_failed),
+    refvar_zero = isTRUE(mfh_artifacts$refvar_zero),
+    var_choice  = mfh_artifacts$var_choice %||% "(unset)",
+    cov_choice  = mfh_artifacts$cov_choice %||% "(unset)",
+    diag_model  = mfh_artifacts$diag_model %||% "(unset)",
+    bad_rows    = mfh_artifacts$bad_vardir_rows %||% 0L,
+    n_domains   = mfh_artifacts$n_domains %||% NA_integer_,
+    n_fitted    = mfh_artifacts$n_domains_fitted %||% mfh_artifacts$n_domains %||% NA_integer_
+  )
+} else {
+  NULL
+}
+
+mfh_not_executed <- !is.null(mfh_status) &&
+  (mfh_status$fit_failed || mfh_status$refvar_zero)
+
+mfh_change <- safe_read_csv("comparison_final.csv")
+mfh_change_available <- !is.null(mfh_change) &&
+  "diff" %in% names(mfh_change) &&
+  any(is.finite(suppressWarnings(as.numeric(mfh_change$diff))))
+
+if (!is.null(mfh_status) && mfh_status$bad_rows > 0 && !mfh_not_executed) {
+  cat(sprintf(
+    paste0(
+      "<div class=\"alert alert-info\">",
+      "<strong>Note:</strong> %s of %s domains had missing/non-finite sampling variances ",
+      "and were excluded from MFH fitting. Their MFH estimates are reported as NA. ",
+      "The MFH model was fitted on the remaining %s domains.",
+      "</div>\n"
+    ),
+    mfh_status$bad_rows,
+    mfh_status$n_domains,
+    mfh_status$n_fitted
+  ))
+}
+
+if (mfh_not_executed) {
+  if (mfh_status$fit_failed) {
+    reason <- "The selected MFH model did not return a valid fit object."
+  } else {
+    reason <- "The selected MFH model estimated the random-effects variance at zero, so no domain-specific shrinkage was produced."
+  }
+
+  cat(sprintf(
+    paste0(
+      "<div class=\"alert alert-warning\">",
+      "<strong>MFH was not executed for this configuration.</strong><br>",
+      "%s<br>",
+      "Selected options: <code>var_choice = %s</code>, <code>cov_choice = %s</code>, ",
+      "<code>diagnostic model = %s</code>.<br>",
+      "MFH maps, UFH-vs-MFH comparisons, and MFH change analyses are omitted or NA-filled.",
+      "</div>\n"
+    ),
+    reason,
+    mfh_status$var_choice,
+    mfh_status$cov_choice,
+    mfh_status$diag_model
+  ))
+} else if (!is.null(mfh_status) && !mfh_change_available) {
+  cat(
+    paste0(
+      "<div class=\"alert alert-info\">",
+      "<strong>MFH fitted, but MFH change analysis is not available.</strong><br>",
+      "The level estimates are available, but the MCPE-based change analysis did not produce finite differences. ",
+      "This can happen with raw direct variances in the parametric bootstrap.",
+      "</div>\n"
+    )
+  )
+}
+```
+
+## Regression Models
+
+```{r formula-table}
+formulas <- safe_read_csv("model_formulas.csv",
+                           file.path(fig_dir, "tables"))
+if (!is.null(formulas)) {
+  kable(formulas,
+        caption = "Selected regression formulas used in the FH and MFH pipelines")
+}
+```
+
+```{r coef-fh}
+fh_coefs <- safe_read_csv("fh_coefficients.csv",
+                           file.path(fig_dir, "tables"))
+if (!is.null(fh_coefs)) {
+  kable(fh_coefs, digits = c(0, 0, 0, 6, 6, 3, 4, 0),
+        caption = "Estimated FH regression coefficients by year")
+}
+```
+
+```{r coef-mfh}
+mfh_coefs <- safe_read_csv("mfh_coefficients.csv",
+                            file.path(fig_dir, "tables"))
+if (!is.null(mfh_coefs)) {
+  kable(mfh_coefs, digits = c(0, 0, 0, 6, 6, 3, 4, 0),
+        caption = "Estimated MFH regression coefficients by year")
+}
+```
+
+## Normality Diagnostics
+
+```{r normality-tests}
+normality <- safe_read_csv("normality_tests.csv",
+                            file.path(fig_dir, "tables"))
+if (!is.null(normality)) {
+  kable(normality, digits = 4,
+        caption = "Shapiro-Wilk normality tests for FH and MFH diagnostics")
+}
+```
+
+### Q-Q Plots
+
+```{r qq-plots, results='asis'}
+qq_files <- list.files(file.path(fig_dir, "diagnostics"),
+                       pattern = "^qq_.*\\.png$", full.names = FALSE)
+if (length(qq_files) > 0) {
+  for (f in sort(qq_files)) {
+    label <- gsub("_", " ", tools::file_path_sans_ext(f))
+    cat(sprintf("\n#### %s\n\n", label))
+    cat(sprintf("![%s](%s)\n\n", label,
+                file.path(fig_dir, "diagnostics", f)))
+  }
+} else {
+  cat("*No Q-Q plots available.*\n")
+}
+```
+
+### Density Plots
+
+```{r density-plots, results='asis'}
+density_files <- list.files(file.path(fig_dir, "diagnostics"),
+                            pattern = "^density_.*\\.png$", full.names = FALSE)
+if (length(density_files) > 0) {
+  for (f in sort(density_files)) {
+    label <- gsub("_", " ", tools::file_path_sans_ext(f))
+    cat(sprintf("\n#### %s\n\n", label))
+    cat(sprintf("![%s](%s)\n\n", label,
+                file.path(fig_dir, "diagnostics", f)))
+  }
+} else {
+  cat("*No density plots available.*\n")
+}
+```
+
+## Rate, MSE, RMSE, and CV Comparisons
+
+```{r metric-comparisons, results='asis'}
+mc_files <- list.files(file.path(fig_dir, "metric_comparisons"),
+                       pattern = "\\.png$", full.names = FALSE)
+if (length(mc_files) > 0) {
+  for (f in sort(mc_files)) {
+    label <- gsub("_", " ", tools::file_path_sans_ext(f))
+    cat(sprintf("\n### %s\n\n", label))
+    cat(sprintf("![%s](%s)\n\n", label,
+                file.path(fig_dir, "metric_comparisons", f)))
+  }
+} else {
+  cat("*No metric comparison plots available.*\n")
+}
+```
+
+## Poverty Maps
+
+```{r poverty-maps, results='asis'}
+map_files <- list.files(file.path(fig_dir, "poverty_maps"),
+                        pattern = "\\.png$", full.names = FALSE)
+if (length(map_files) > 0) {
+  for (f in sort(map_files)) {
+    label <- gsub("_", " ", tools::file_path_sans_ext(f))
+    cat(sprintf("\n### %s\n\n", label))
+    cat(sprintf("![%s](%s)\n\n", label,
+                file.path(fig_dir, "poverty_maps", f)))
+  }
+} else {
+  cat("*No poverty maps available.*\n")
+}
+```
+
+## Statistical Significance of Poverty Changes
+
+```{r sig-comparison}
+sig_cmp <- tryCatch(
+  read_excel(file.path(data_dir, "statistical_significance_comparison.xlsx")),
+  error = function(e) NULL
+)
+if (!is.null(sig_cmp)) {
+  kable(head(sig_cmp, 30), digits = 4,
+        caption = "Statistical significance comparison (first 30 rows)")
+}
+```
+
+```{r change-figures, results='asis'}
+change_files <- list.files(file.path(fig_dir, "change_figures"),
+                           pattern = "\\.png$", full.names = FALSE)
+if (length(change_files) > 0) {
+  for (f in sort(change_files)) {
+    label <- gsub("_", " ", tools::file_path_sans_ext(f))
+    cat(sprintf("\n### %s\n\n", label))
+    cat(sprintf("![%s](%s)\n\n", label,
+                file.path(fig_dir, "change_figures", f)))
+  }
+} else {
+  cat("*No change figures available.*\n")
+}
+```
+
+# Session Information
+
+```{r session-info}
+session_path <- here::here("outputs", "session_info.txt")
+if (file.exists(session_path)) {
+  cat("```\n")
+  cat(readLines(session_path), sep = "\n")
+  cat("\n```\n")
+} else {
+  cat("*Session info not yet generated.*\n")
+}
+```

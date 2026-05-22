@@ -1,0 +1,60 @@
+# ============================================================
+# .gitignore for eu-sae-dashboard
+# ============================================================
+
+# ---- Portable R library (recreated by install_packages.R on first run) ----
+r_local_library/
+
+# ---- Generated outputs (regenerated each time the pipeline runs) ----
+outputs/*
+!outputs/.gitkeep
+!outputs/data/
+outputs/data/*
+!outputs/data/.gitkeep
+!outputs/tables/
+outputs/tables/*
+!outputs/tables/.gitkeep
+!outputs/figures/
+outputs/figures/*
+!outputs/figures/.gitkeep
+final_report.html
+Rplots.pdf
+
+# ---- Run logs ----
+app_runs/
+
+# ---- R environment / session ----
+.Rhistory
+.RData
+.Rproj.user/
+.Renviron
+renv/library/
+renv/staging/
+renv/local/
+renv/python/
+
+# ---- Temporary knitr figure caches ----
+.knitr_figs_*/
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+.claude/
+*.swp
+*~
+
+# ---- Logs and tmp ----
+*.log
+tmp/
+temp/
+
+# ---- Local config that should not be shared ----
+.env
+.env.local
+api_keys.yml
+secrets.yml
